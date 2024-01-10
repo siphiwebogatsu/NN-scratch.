@@ -1,0 +1,456 @@
+---
+title: "Wildlife Project"
+author: "Siphiwe Bogatsu"
+date: "2024-01-10"
+output: html_document
+---
+
+```{r}
+# Code adapted from Dr Etienne Pienaar's code and code done in class
+
+# Read data in 
+dat = read.table("Hawks_Data_2023.txt", h = TRUE)
+head(dat, 10)
+
+```
+
+
+
+Build A Neural Net from scratch 
+```{r}
+
+# Calculate the number of parameters needed for the model
+totalParams = function(p, q, d){
+  return(p*d+d*q+d+q)
+}
+
+# Tanh activation function
+sig1 = function(z){
+
+  tanh(z)
+}
+
+# ReLU activation function
+sig1alt = function(z){
+  pmax(z,0)
+}
+
+
+
+# Softmax function
+sig2 = function(z){
+  # Loop through all observations
+  for (i in 1:as.numeric(dim(z)[2])){
+    # For each observation, store the corresponding 3 values
+    val1 = z[1,i]
+    val2 = z[2,i]
+    val3 = z[3,i]
+    # Perform the softmax function
+    for (j in 1:3){
+      z[j,i] = (exp(z[j,i]))/(exp(val1)+exp(val2)+exp(val3))
+    }
+  }
+  z
+}
+
+# Separate the data into x-values and y-values
+Xvals = as.matrix(dat[,4:5])
+Yvals = as.matrix(dat[,1:3])
+
+# Number of hidden nodes
+d = 8
+# Number of observations
+n = as.numeric(dim(Xvals)[1])
+# Number of input parameters
+p = as.numeric(dim(Xvals)[2])
+# Number of output classes
+q = as.numeric(dim(Yvals)[2])
+
+# Calculate the number of parameters needed for the model
+totalParams = as.numeric(totalParams(p, q, d))
+
+
+
+
+neural_net = function(X,Y,theta,m,nu,hidden){
+  # Extract the hidden activation function type
+  hiddenType = hidden
+  # Relevant dimensional variables
+  N = dim(X)[1]
+  p = dim(X)[2]
+  q = dim(Y)[2]
+  
+  # Populate weight-matrix and bias vectors
+  index = 1:(p*m)
+  W1    = matrix(theta[index],p,m)
+  index = max(index)+1:(m*q)
+  W2    = matrix(theta[index],m,q)
+  index = max(index)+1:(m)
+  b1    = matrix(theta[index],m,1)
+  index = max(index)+1:(q)
+  b2    = matrix(theta[index],q,1)
+  
+  # If the hidden activation function is ReLU
+  if (hiddenType == "relu"){
+    ones = matrix(1, 1, N)
+    A0 = t(X)
+    A1 = sig1alt(t(W1)%*%A0+b1%*%ones)
+    A2 = sig2(t(W2)%*%A1+b2%*%ones)
+    A2 = as.matrix(A2)
+    out = t(A2)
+  } 
+  # If the hidden activation function is tanh
+  if (hiddenType == "tanh"){
+    ones = matrix(1, 1, N)
+    A0 = t(X)
+    A1 = sig1(t(W1)%*%A0+b1%*%ones)
+    A2 = sig2(t(W2)%*%A1+b2%*%ones)
+    A2 = as.matrix(A2)
+    out = t(A2)
+  }
+  
+  # Cross-entropy error function
+  E1 = (-1/N)*sum(Y*log(out))
+  # L1 regularization
+  E2 = E1+nu/N*(sum(abs(W1))+sum(abs(W2)))
+  
+  # Return predictions and error
+  return(list(out = out, E1 = E1, E2 = E2))
+}
+
+#set.seed(2023)
+
+# Create a random set of parameter values
+theta_rand = runif(totalParams, 0, 1)
+
+# Create a function to optimize and return the cross-entropy error value
+obj = function(pars){
+  res = neural_net(Xvals,Yvals,pars,d,0,"tanh")
+  return(res$E1)
+}
+obj(theta_rand)
+
+# Use nlm to optimize the obj function to obtain meaningful parameter estimates
+res_opt = nlm(obj,theta_rand,iterlim = 500)
+res_opt
+#plot(abs(res_opt$gradient), type = 'h')
+
+# Use optimal parameter estimates for neural net function to obtain accurate (but overfitted) estimates
+res = neural_net(Xvals,Yvals,res_opt$estimate,d,0,"tanh")
+res
+
+##############################################
+
+
+```
+
+
+Conduct a Validation Analysis using a 50-50 training-validation split of the data
+
+```{r}
+
+set.seed(2023)
+set = sample(1:n, 0.5*n, replace=FALSE)
+
+# Separate data into training set and validation set (50-50)
+X_train = matrix(Xvals[set,], ncol = 2)
+Y_train = matrix(Yvals[set,], ncol = 3)
+
+X_val = matrix(Xvals[-set,], ncol = 2)
+Y_val = matrix(Yvals[-set,], ncol = 3)
+
+# Choose a random optimaization level
+nu_val = 0.1
+obj = function(pars){
+  res = neural_net(X_train,Y_train,pars,d,nu_val,"tanh")
+  return(res$E2)
+}
+
+res_opt = nlm(obj,theta_rand,iterlim = 500)
+res_opt
+#plot(abs(res_opt$gradient), type = 'h')
+
+# Now create a sequence of optimization levels to find the optimal nu
+M_seq = 50
+Train_E = rep(NA, M_seq)
+Val_E = rep(NA, M_seq)
+nu_vals = seq(0.01, 0.5, length = M_seq)
+
+# For each nu level assess the training and validation error
+for (i in 1:M_seq){
+  nu_val = nu_vals[i]
+  theta_rand = runif(totalParams, 0, 1)
+  res_opt = nlm(obj, theta_rand, iterlim = 500)
+  
+  res1 = neural_net(X_train, Y_train, res_opt$estimate, d, 0,"tanh")
+  res2 = neural_net(X_val, Y_val, res_opt$estimate, d, 0,"tanh")
+  
+  Train_E[i] = res1$E1
+  Val_E[i] = res2$E1
+  
+  print(paste0("Val run ", i))
+}
+
+# Create a plot of validation error vs nu level
+plot(Val_E~nu_vals, type = "l", ylim = c(0, max(Val_E)), cex.lab = 2, lwd = 3, col = 4, xlab = "Different values of nu", ylab = "Validation Error")
+
+# Find the optimal nu value
+which.min(Val_E)
+nu_valFinal = nu_vals[which.min(Val_E)]
+
+##############################################
+```
+
+
+
+
+Repeat the process again, but using RELU-units on the hidden layers. 
+```{r}
+
+
+set.seed(2023)
+set = sample(1:n, 0.5*n, replace=FALSE)
+
+# Choose a random optimization level
+nu_val = 0.1
+obj = function(pars){
+  res = neural_net(X_train,Y_train,pars,d,nu_val,"relu")
+  return(res$E2)
+}
+
+res_opt = nlm(obj,theta_rand,iterlim = 500)
+res_opt
+
+# Now create a sequence of optimization levels to find the optimal nu
+M_seq = 50
+Train_E = rep(NA, M_seq)
+Val_E = rep(NA, M_seq)
+nu_vals = seq(0.01, 0.5, length = M_seq)
+
+# For each nu level assess the training and validation error
+for (i in 1:M_seq){
+  nu_val = nu_vals[i]
+  theta_rand = runif(totalParams, 0, 1)
+  res_opt = nlm(obj, theta_rand, iterlim = 500)
+  
+  res1 = neural_net(X_train, Y_train, res_opt$estimate, d, 0,"relu")
+  res2 = neural_net(X_val, Y_val, res_opt$estimate, d, 0,"relu")
+  
+  Train_E[i] = res1$E1
+  Val_E[i] = res2$E1
+  
+  print(paste0("Val run ", i))
+}
+
+# Create a plot of validation error vs nu level
+lines(Val_E~nu_vals, type = "l", lwd = 3, col = 3)
+legend(0.4, 0.1, legend=c("Tanh", "ReLu"), col=c(4, 3), lty=1:1)
+
+# Find the optimal nu value
+nu_valRelu = nu_vals[which.min(Val_E)]
+
+nu_valFinal = 0.28
+
+##############################################
+
+```
+
+Fit the resulting model to the full data set using the appropriate level of regularisation 
+```{r}
+
+# nu equal to 0 so no regularization 
+nu_val = 0
+obj = function(pars){
+  res = neural_net(Xvals,Yvals,pars,d,nu_val,"tanh")
+  return(res$E2)
+}
+
+# Get optimal parameter estimates
+res_opt1 = nlm(obj,theta_rand,iterlim = 500)
+
+# Fit model with those estimates
+res1 = neural_net(Xvals,Yvals,res_opt1$estimate,d,0,"tanh")
+out1 = res1$out
+
+# nu equal to optimal nu value 0.2078
+nu_val = nu_valFinal
+obj = function(pars){
+  res = neural_net(Xvals,Yvals,pars,d,nu_val,"tanh")
+  return(res$E2)
+}
+
+# Get optimal parameter estimates
+res_opt2 = nlm(obj,theta_rand,iterlim = 500)
+
+# Fit model with those estimates
+res2 = neural_net(Xvals,Yvals,res_opt2$estimate,d,0,"tanh")
+out2 = res2$out
+
+# Plot the absolute values parameter estimates for no regularization and with regularization
+par(mfrow = c(1,1))
+plot(abs(res_opt1$estimate), type = 'h', ylab = "Parameter Estimates (nu_val = 0)", cex.lab = 1.8)
+plot(abs(res_opt2$estimate), type = 'h', ylab = "Parameter Estimates (nu_val = 0.28)", cex.lab = 1.8)
+
+##############################################
+
+
+```
+
+ Use the regularized model to construct a response curve over the input variables for both  the tanh and ReLU specifications. 
+```{r}
+
+# Perform regularization for ReLU activation function
+nu_val = nu_valRelu
+obj = function(pars){
+  res = neural_net(Xvals,Yvals,pars,d,nu_val,"relu")
+  return(res$E2)
+}
+
+res_optrelu = nlm(obj,theta_rand,iterlim = 500)
+
+##############################################
+
+
+## Tanh 
+
+par(mfrow = c(1, 1))
+
+# Create varying x and y coordinates
+M = 200
+x1_dummy = seq(min(dat$Wing), max(dat$Wing), length = M)
+x2_dummy = seq(min(dat$Weight), max(dat$Weight), length = M)
+
+x1 = rep(x1_dummy, M)
+x2 = rep(x2_dummy, each = M)
+
+# Using coordinates create a lattice
+lat = data.frame(Wing = x1, Weight = x2)
+
+# Fit the model and get the outputs
+N = dim(lat)[1]
+p = 2
+q = 3
+
+m=8
+index = 1:(p*m)
+W1    = matrix(res_opt2$estimate[index],p,m)
+index = max(index)+1:(m*q)
+W2    = matrix(res_opt2$estimate[index],m,q)
+index = max(index)+1:(m)
+b1    = matrix(res_opt2$estimate[index],m,1)
+index = max(index)+1:(q)
+b2    = matrix(res_opt2$estimate[index],q,1)
+
+ones = matrix(1, 1, N)
+A0 = t(lat)
+A1 = sig1(t(W1)%*%A0+b1%*%ones)
+A2 = sig2(t(W2)%*%A1+b2%*%ones)
+A2 = as.matrix(A2)
+out = t(A2)
+
+# Look at the predicted outputs
+head(out)
+
+clss = apply(out, 1, which.max)
+
+# Specify colours to be used
+cols = c("blue", "grey", "purple")
+
+allSpecInDat = c()
+
+# Convert one-hot response into a single column
+for (k in 1:148){
+  if (dat[k, 1] == 1){
+    allSpecInDat[k] = 1
+  } else if (dat[k, 2] == 1){
+    allSpecInDat[k] = 2
+  } else if (dat[k, 3] == 1){
+    allSpecInDat[k] = 3
+  }
+}
+
+# Plot response curve for tanh
+plot(x2~x1, pch = 16, col = cols[clss], xlab = "Wing", ylab = "Weight", cex.lab = 1.8)
+text(dat$Weight~dat$Wing, labels = as.numeric(allSpecInDat))
+
+## ReLU
+
+M = 200
+
+# Create varying x and y coordinates
+x1_dummy = seq(min(dat$Wing), max(dat$Wing), length = M)
+x2_dummy = seq(min(dat$Weight), max(dat$Weight), length = M)
+
+x1 = rep(x1_dummy, M)
+x2 = rep(x2_dummy, each = M)
+
+# Using coordinates create a lattice
+lat = data.frame(Wing = x1, Weight = x2)
+
+N = dim(lat)[1]
+p = 2
+q = 3
+
+# Fit the model and get the outputs
+m=8
+index = 1:(p*m)
+W1    = matrix(res_optrelu$estimate[index],p,m)
+index = max(index)+1:(m*q)
+W2    = matrix(res_optrelu$estimate[index],m,q)
+index = max(index)+1:(m)
+b1    = matrix(res_optrelu$estimate[index],m,1)
+index = max(index)+1:(q)
+b2    = matrix(res_optrelu$estimate[index],q,1)
+
+ones = matrix(1, 1, N)
+A0 = t(lat)
+A1 = sig1alt(t(W1)%*%A0+b1%*%ones)
+A2 = sig2(t(W2)%*%A1+b2%*%ones)
+A2 = as.matrix(A2)
+out = t(A2)
+
+# Look at the predicted outputs
+head(out)
+
+clss = apply(out, 1, which.max)
+
+# Specify colours to be used
+cols = c("blue", "grey", "purple")
+
+allSpecInDat = c()
+
+# Convert one-hot response into a single column
+for (k in 1:148){
+  if (dat[k, 1] == 1){
+    allSpecInDat[k] = 1
+  } else if (dat[k, 2] == 1){
+    allSpecInDat[k] = 2
+  } else if (dat[k, 3] == 1){
+    allSpecInDat[k] = 3
+  }
+}
+
+# Plot response curve for ReLU
+plot(x2~x1, pch = 16, col = cols[clss], xlab = "Wing", ylab = "Weight", cex.lab = 1.8)
+text(dat$Weight~dat$Wing, labels = as.numeric(allSpecInDat))
+
+allSpecInDat2 = c()
+
+# Convert one-hot response into a single column
+for (k in 1:148){
+  if (dat[k, 1] == 1){
+    allSpecInDat2[k] = "A"
+  } else if (dat[k, 2] == 1){
+    allSpecInDat2[k] = "B"
+  } else if (dat[k, 3] == 1){
+    allSpecInDat2[k] = "C"
+  }
+}
+
+#Original data plot
+dat$Species = allSpecInDat2
+
+library(ggplot2)
+ggplot(dat, aes(x = Wing, y = Weight, color = Species)) + geom_point() + theme(text = element_text(size = 20))
+```
+
